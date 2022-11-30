@@ -12,6 +12,7 @@
 	<modules>
 		<module>category-feed-function</module>
 		<module>cif-feed-function</module>
+		<module>transaction-feed-function</module>
 	</modules>
 	
 </project>

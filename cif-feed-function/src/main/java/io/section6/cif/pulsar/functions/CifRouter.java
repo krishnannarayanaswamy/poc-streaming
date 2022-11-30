@@ -13,14 +13,29 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.HashMap;
+import java.util.Optional;
 import java.util.Set;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class CifRouter implements Function<CifData, Void> {
-	private static final String ASTRA_TOKEN = "AstraCS:RgUfqIQuoDmWoKbIpMDDTTMR:41aba37ec0891bb201c3c81ec66fe4719c744e285936ec6dc9a0b05f2ef08972";
+	private String ASTRA_TOKEN;
 	private static final String ENDPOINT = "https://1e4f081a-c9de-4b95-9607-1ffb6b202b60-australiaeast.apps.astra.datastax.com/api/rest";
+
+	@Override
+	public void initialize(Context context) {
+
+		System.out.println(context.getUserConfigMap());
+
+		Optional<Object> token = context.getUserConfigValue("astra-token");
+
+		if (token.isEmpty()) {
+			throw new RuntimeException("No astra-token found");
+		}
+
+		this.ASTRA_TOKEN = token.toString();
+	}
 
 	public Void process(CifData cifData, Context ctx) throws Exception {
 		System.out.println(cifData.tokenisedCif);
@@ -46,16 +61,19 @@ public class CifRouter implements Function<CifData, Void> {
 
 			HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
-			System.out.println(String.format("Account: %s, Cif: %, StatusCode: %s, Response: %s", awc.accountnumber, awc.cifid, response.statusCode(), response.body()));
+			System.out.println("AccountWithCif");
+			System.out.println(response.statusCode());
+			System.out.println(response.body());
 		}
 	}
 
 	private void checkTransactionAccountWithCifView(HttpClient client, Set<AccountWithCif> awcs) throws Exception {
+
 		for (AccountWithCif awc: awcs) {
 			String queryJson = "{ \"accountnumber\": { \"$eq\": \""+awc.accountnumber+"\" } }";
 
 			HttpRequest request = HttpRequest.newBuilder()
-					.uri(CifRouter.appendUri(ENDPOINT + "/v2/keyspaces/transactions/transactions_account_with_cif_view", "where="+queryJson))
+					.uri(this.appendUri(ENDPOINT + "/v2/keyspaces/transactions/transactions_account_with_cif_view", "where="+queryJson))
 					.header("Content-Type", "application/json")
 					.header("x-cassandra-token", ASTRA_TOKEN)
 					.GET()
@@ -83,7 +101,7 @@ public class CifRouter implements Function<CifData, Void> {
 		}
 	}
 
-	private static void updateCifOnTransactionAccountWithCifView(HttpClient client, String primaryKey, JSONArray cifIds) throws IOException, InterruptedException {
+	private void updateCifOnTransactionAccountWithCifView(HttpClient client, String primaryKey, JSONArray cifIds) throws IOException, InterruptedException {
 		System.out.println(String.format("Updating view table for account: %s", primaryKey));
 
 		HashMap<String, String> data = new HashMap();
@@ -99,10 +117,12 @@ public class CifRouter implements Function<CifData, Void> {
 
 		HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
-		System.out.println(String.format("Transaction: %s, StatusCode: %s, Response: %s", primaryKey, response.statusCode(), response.body()));
+		System.out.println("Transaction");
+		System.out.println(response.statusCode());
+		System.out.println(response.body());
 	}
 
-	public static URI appendUri(String uri, String appendQuery) throws URISyntaxException {
+	public URI appendUri(String uri, String appendQuery) throws URISyntaxException {
 		URI oldUri = new URI(uri);
 
 		String newQuery = oldUri.getQuery();

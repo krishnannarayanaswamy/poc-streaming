@@ -20,22 +20,22 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class CifRouter implements Function<CifData, Void> {
-	private String ASTRA_TOKEN;
+	private String ASTRA_TOKEN = "<replace-me>";
 	private static final String ENDPOINT = "https://1e4f081a-c9de-4b95-9607-1ffb6b202b60-australiaeast.apps.astra.datastax.com/api/rest";
 
-	@Override
-	public void initialize(Context context) {
-
-		System.out.println(context.getUserConfigMap());
-
-		Optional<Object> token = context.getUserConfigValue("astra-token");
-
-		if (token.isEmpty()) {
-			throw new RuntimeException("No astra-token found");
-		}
-
-		this.ASTRA_TOKEN = token.toString();
-	}
+//	@Override
+//	public void initialize(Context context) {
+//
+//		System.out.println(context.getUserConfigMap());
+//
+//		Optional<Object> token = context.getUserConfigValue("astra-token");
+//
+//		if (token.isEmpty()) {
+//			throw new RuntimeException("No astra-token found");
+//		}
+//
+//		this.ASTRA_TOKEN = token.toString();
+//	}
 
 	public Void process(CifData cifData, Context ctx) throws Exception {
 		System.out.println(cifData.tokenisedCif);

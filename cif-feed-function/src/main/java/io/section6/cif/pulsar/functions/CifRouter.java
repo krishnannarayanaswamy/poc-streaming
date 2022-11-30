@@ -6,54 +6,113 @@ import io.section6.cif.model.CifData;
 import org.apache.pulsar.functions.api.Context;
 import org.apache.pulsar.functions.api.Function;
 
+import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.HashMap;
+import java.util.Set;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 public class CifRouter implements Function<CifData, Void> {
 	private static final String ASTRA_TOKEN = "AstraCS:RgUfqIQuoDmWoKbIpMDDTTMR:41aba37ec0891bb201c3c81ec66fe4719c744e285936ec6dc9a0b05f2ef08972";
 	private static final String ENDPOINT = "https://1e4f081a-c9de-4b95-9607-1ffb6b202b60-australiaeast.apps.astra.datastax.com/api/rest";
-	private static final String CIF_END = "/v2/keyspaces/transactions/account_with_cif";
 
 	public Void process(CifData cifData, Context ctx) throws Exception {
 		System.out.println(cifData.tokenisedCif);
 
 		HttpClient client = HttpClient.newHttpClient();
 
-		for (AccountWithCif awc: cifData.asAccountWithCif()) {
-			// work-around to not include jackson serialization lib
-			String json = "{ \"cifid\": \""+ awc.cifid +"\", \"accountnumber\": \""+awc.accountnumber+"\", \"accounttype\": \""+awc.accounttype+"\"}";
+		Set<AccountWithCif> accountWithCifs = cifData.asAccountWithCif();
 
-			var request = HttpRequest.newBuilder()
-					.uri(URI.create(ENDPOINT + CIF_END))
-					.header("Content-Type", "application/json")
-					.header("x-cassandra-token", ASTRA_TOKEN)
-					.POST(HttpRequest.BodyPublishers.ofString(json))
-					.build();
-
-			var response = client.send(request, HttpResponse.BodyHandlers.ofString());
-
-			System.out.println(response.statusCode());
-			System.out.println(response.body());
-		}
-
-		/*
-
-		additional topic + sink method
-
-		String outputTopic = ctx.getTenant() + "/" + ctx.getNamespace() + "/cif-data-to-db";
-
-		for (AccountWithCif awc: cifData.asAccountWithCif()) {
-			ctx.newOutputMessage(outputTopic, outputSchema)
-					.properties(ctx.getCurrentRecord().getProperties())
-					.value((AccountWithCif) awc)
-					.sendAsync();
-		}
-
-		*/
+		this.insertAccountWithCif(client, accountWithCifs);
+		this.checkTransactionAccountWithCifView(client, accountWithCifs);
 
 		return null;
+	}
 
+	private void insertAccountWithCif(HttpClient client, Set<AccountWithCif> awcs) throws Exception {
+		for (AccountWithCif awc: awcs) {
+			HttpRequest request = HttpRequest.newBuilder()
+					.uri(URI.create(ENDPOINT + "/v2/keyspaces/transactions/account_with_cif"))
+					.header("Content-Type", "application/json")
+					.header("x-cassandra-token", ASTRA_TOKEN)
+					.POST(HttpRequest.BodyPublishers.ofString(new JSONObject(awc).toString()))
+					.build();
+
+			HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+			System.out.println(String.format("Account: %s, Cif: %, StatusCode: %s, Response: %s", awc.accountnumber, awc.cifid, response.statusCode(), response.body()));
+		}
+	}
+
+	private void checkTransactionAccountWithCifView(HttpClient client, Set<AccountWithCif> awcs) throws Exception {
+		for (AccountWithCif awc: awcs) {
+			String queryJson = "{ \"accountnumber\": { \"$eq\": \""+awc.accountnumber+"\" } }";
+
+			HttpRequest request = HttpRequest.newBuilder()
+					.uri(CifRouter.appendUri(ENDPOINT + "/v2/keyspaces/transactions/transactions_account_with_cif_view", "where="+queryJson))
+					.header("Content-Type", "application/json")
+					.header("x-cassandra-token", ASTRA_TOKEN)
+					.GET()
+					.build();
+
+			HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+			JSONObject json = new JSONObject(response.body());
+
+			// only update if existing account exists
+			if (json.getInt("count") > 0) {
+				System.out.println("Transaction account found");
+
+				JSONArray cifids = json.getJSONArray("data").getJSONObject(0).getJSONArray("cifid");
+
+				// merge in new cif-id
+				cifids.put(awc.cifid);
+
+				this.updateCifOnTransactionAccountWithCifView(client, awc.accountnumber, cifids);
+
+				return;
+			}
+
+			System.out.println("No transaction account found, skipping");
+		}
+	}
+
+	private static void updateCifOnTransactionAccountWithCifView(HttpClient client, String primaryKey, JSONArray cifIds) throws IOException, InterruptedException {
+		System.out.println(String.format("Updating view table for account: %s", primaryKey));
+
+		HashMap<String, String> data = new HashMap();
+
+		data.put("cifid", "{" + cifIds.join(",").replace("\"", "'") + "}");
+
+		HttpRequest request = HttpRequest.newBuilder()
+				.uri(URI.create(ENDPOINT + "/v2/keyspaces/transactions/transactions_account_with_cif_view/"+primaryKey))
+				.header("Content-Type", "application/json")
+				.header("x-cassandra-token", ASTRA_TOKEN)
+				.method("PATCH", HttpRequest.BodyPublishers.ofString(new JSONObject(data).toString()))
+				.build();
+
+		HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+		System.out.println(String.format("Transaction: %s, StatusCode: %s, Response: %s", primaryKey, response.statusCode(), response.body()));
+	}
+
+	public static URI appendUri(String uri, String appendQuery) throws URISyntaxException {
+		URI oldUri = new URI(uri);
+
+		String newQuery = oldUri.getQuery();
+		if (newQuery == null) {
+			newQuery = appendQuery;
+		} else {
+			newQuery += "&" + appendQuery;
+		}
+
+		return new URI(oldUri.getScheme(), oldUri.getAuthority(),
+				oldUri.getPath(), newQuery, oldUri.getFragment());
 	}
 }
